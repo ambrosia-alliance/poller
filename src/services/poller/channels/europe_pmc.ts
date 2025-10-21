@@ -57,7 +57,6 @@ export function isEuropePmcResp(resp: unknown): resp is EuropePmcResp {
 }
 
 function buildRequestUrl(query: string, interval: [ISO8601Extended, ISO8601Extended]) {
-    console.log(interval)
     return `${BASE_URL}?${
         toQueryStr({
             query: query.trim() + ` AND OPEN_ACCESS:y AND FIRST_PDATE:[${interval[0]} TO ${interval[1]}]`,
@@ -76,6 +75,7 @@ async function handleResponse(resp: unknown, therapyId: number) {
     for (const article of resp.resultList.result) {
         await insertArticle(
             `${RESOURCE_ID}/${article.source}/${article.id}`,
+            RESOURCE_ID,
             article.title,
             `https://europepmc.org/article/${article.source}/${article.id}`,
             article.firstPublicationDate,

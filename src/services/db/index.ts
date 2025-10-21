@@ -8,6 +8,7 @@ export async function query(query_: string, params: any[]) {
 
 export async function insertArticle(
     id: string,
+    source: string,
     title: string,
     sourceUrl: string,
     publishedDate: string,
@@ -16,10 +17,10 @@ export async function insertArticle(
     therapyId: number
 ) {
     await query(`
-        insert into article (id, title, sourceUrl, publishedDate, authors, contentUrl, therapyId)
-        values ($1, $2, $3, $4, $5, $6, $7)
+        insert into article (id, source, title, source_url, published_date, authors, content_url, therapy_id)
+        values ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (id) DO NOTHING;`,
 
-        [id, title, sourceUrl, publishedDate, authors, contentUrl, therapyId]
+        [id, source, title, sourceUrl, publishedDate, authors, contentUrl, therapyId]
     )
 }

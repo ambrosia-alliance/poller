@@ -10,10 +10,9 @@ const BASE_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search";
 
 type EuropePmcArticle = {
     id: string,
-    pmcid: string,
     source: string,
     authorString?: string,
-    fullTextIdList: {
+    fullTextIdList?: {
         fullTextId: string[]
     }
     title: string
@@ -35,19 +34,17 @@ const isEuropePmcArticle = (article: unknown): article is EuropePmcArticle => {
     if (article.authorString !== undefined && typeof article.authorString !== "string") return false;
     return (
         isNonEmptyString(article.id) &&
-        isNonEmptyString(article.pmcid) &&
         isNonEmptyString(article.source) &&
         isNonEmptyString(article.title) &&
         isNonEmptyString(article.pubType) &&
         isNonEmptyString(article.firstPublicationDate) &&
-        isObject(article.fullTextIdList) &&
-        isStringArray(article.fullTextIdList.fullTextId)
+        (article.fullTextIdList === undefined || isObject(article.fullTextIdList)) &&
+        (article.fullTextIdList ? isStringArray(article.fullTextIdList.fullTextId) : true)
     );
 };
 
 export function isEuropePmcResp(resp: unknown): resp is EuropePmcResp {
     if (!isObject(resp)) return false;
-
     if (!isNumber(resp.hitCount)) return false;
     if (resp.nextPageUrl !== undefined && typeof resp.nextPageUrl !== "string") return false;
 
@@ -56,23 +53,25 @@ export function isEuropePmcResp(resp: unknown): resp is EuropePmcResp {
     return isArray(rl.result, isEuropePmcArticle);
 }
 
-function buildRequestUrl(query: string, interval: [ISO8601Extended, ISO8601Extended]) {
+function buildRequestUrl(query: string, interval: [ISO8601Extended, ISO8601Extended], limit?: number) {
     return `${BASE_URL}?${
         toQueryStr({
             query: query.trim() + ` AND OPEN_ACCESS:y AND FIRST_PDATE:[${interval[0]} TO ${interval[1]}]`,
             cursorMark: "*",
             synonym: "false",
             format: "json",
-            pageSize: "100"
+            pageSize: limit ? limit.toString() : "100"
         })
     }`;
 }
 
-async function handleResponse(resp: unknown, therapyId: number) {
+async function handleResponse(resp: unknown, therapyId: number, limit?: number) {
     if (!isEuropePmcResp(resp)) {
+        console.log("Broken data")
         return
     }
     for (const article of resp.resultList.result) {
+        if (!article.fullTextIdList) continue;
         await insertArticle(
             `${RESOURCE_ID}/${article.source}/${article.id}`,
             RESOURCE_ID,
@@ -80,11 +79,14 @@ async function handleResponse(resp: unknown, therapyId: number) {
             `https://europepmc.org/article/${article.source}/${article.id}`,
             article.firstPublicationDate,
             article.authorString,
-            `https://www.ebi.ac.uk/europepmc/webservices/rest/${article.pmcid}/fullTextXML`,
+            `https://www.ebi.ac.uk/europepmc/webservices/rest/${article.fullTextIdList.fullTextId[0]}/fullTextXML`,
             therapyId
         );
     }
-    if(resp.nextPageUrl) {
+
+    // TODO multi-request with limit
+    // For now buildRequestUrl forces EPMC to return `limit` of articles in 1 response.
+    if(resp.nextPageUrl && !limit) {
         const nextResp = await axios.get(resp.nextPageUrl)
         if (nextResp.status !== 200) {
             console.error(`request to ${resp.nextPageUrl} failed with status code ${nextResp.status}`);
@@ -92,14 +94,17 @@ async function handleResponse(resp: unknown, therapyId: number) {
         console.log(`${RESOURCE_ID} - NEXT PAGE`);
         await handleResponse(nextResp.data, therapyId);
     } else {
-        console.log(`${RESOURCE_ID} - DONE`);
+        console.log(`${RESOURCE_ID} - ${therapyId} - DONE`);
     }
 }
 
 export function europePmcChannel(
     therapyId: number,
     query: string,
-    forceInterval?: [ISO8601Extended, ISO8601Extended]
+    opts? : {
+        limit?: number,
+        forceInterval?: [ISO8601Extended, ISO8601Extended]
+    }
 ): PollerChannel {
     const dayBefore = new Date();
     const yesterdayUTC = new Date();
@@ -110,8 +115,9 @@ export function europePmcChannel(
         title: `Europe PMC / ${query.trim()}`,
         url: buildRequestUrl(
             query,
-            forceInterval || [toISO8601Extended(dayBefore), toISO8601Extended(yesterdayUTC)]
+            opts?.forceInterval || [toISO8601Extended(dayBefore), toISO8601Extended(yesterdayUTC)],
+            opts?.limit
         ),
-        responseHandler: ((resp: unknown) => handleResponse(resp, therapyId))
+        responseHandler: ((resp: unknown) => handleResponse(resp, therapyId, opts?.limit))
     }
 }
